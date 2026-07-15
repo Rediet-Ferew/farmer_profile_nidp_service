@@ -1,0 +1,17 @@
+[project]
+name = "openg2p-farmer-profile-dedup"
+version = "0.1.0"
+description = "Standalone Farmer Profile national ID deduplication service"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "openg2p-fastapi-common",
+    "pydantic-settings",
+    "sqlalchemy",
+    "asyncpg",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
