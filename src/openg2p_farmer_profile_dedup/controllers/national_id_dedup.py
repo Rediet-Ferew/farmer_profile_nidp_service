@@ -31,4 +31,5 @@ class NationalIdDedupController:
     async def status(self):
         status = self.worker.service.get_status().model_dump()
         status.update(self.worker.get_status_values())
+        status["latest_persisted_run"] = await self.worker.service.get_latest_persisted_run()
         return DedupStatusResponse.model_validate(status)

@@ -33,6 +33,7 @@ class DedupRunRequest(BaseModel):
 
 
 class DedupRunResponse(BaseModel):
+    run_id: int | None = None
     fetched: int = 0
     sent_to_nidp: int = 0
     nidp_chunks: int = 0
@@ -54,9 +55,12 @@ class DedupStatusResponse(BaseModel):
     chunk_limit: int
     fetch_limit: int
     include_id_types: list[str]
+    partner_unique_id_prefix: str = ""
     processed_flag_value: str
     response_id_type: str
     response_id_field: str
+    service_db_auto_migrate: bool = True
+    latest_persisted_run: dict | None = None
     last_run_started_at: str | None = None
     last_run_finished_at: str | None = None
     last_run_status: str | None = None

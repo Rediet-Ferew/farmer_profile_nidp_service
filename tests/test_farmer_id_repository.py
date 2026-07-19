@@ -57,6 +57,8 @@ class TestFarmerIdRepository(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0].value, "12345678901234567890123456789")
         self.assertEqual(session.executed_params["include_id_types"], ["UID", "FAN", "RID"])
         self.assertEqual(session.executed_params["limit"], 100)
+        self.assertEqual(session.executed_params["partner_unique_id_prefix"], "")
+        self.assertEqual(session.executed_params["partner_unique_id_pattern"], "%")
 
         query = session.executed_query
         self.assertIn("rp.is_farmer = 'yes'", query)
@@ -67,7 +69,27 @@ class TestFarmerIdRepository(unittest.IsolatedAsyncioTestCase):
         self.assertIn("gid.fayda_processed = 'false'", query)
         self.assertIn("gid.fayda_processed IS NULL", query)
         self.assertIn("gid.fayda_processed = ''", query)
+        self.assertIn("rp.unique_id LIKE :partner_unique_id_pattern", query)
         self.assertIn("LIMIT", query)
+
+    async def test_fetch_pending_ids_can_filter_by_unique_id_prefix(self):
+        session = FakeSession([])
+
+        await FarmerIdRepository().fetch_pending_ids(
+            session=session,
+            include_id_types=["UID"],
+            limit=10,
+            partner_unique_id_prefix="LOCAL-FAYDA-PIPELINE",
+        )
+
+        self.assertEqual(
+            session.executed_params["partner_unique_id_prefix"],
+            "LOCAL-FAYDA-PIPELINE",
+        )
+        self.assertEqual(
+            session.executed_params["partner_unique_id_pattern"],
+            "LOCAL-FAYDA-PIPELINE%",
+        )
 
     async def test_fetch_pending_ids_does_not_fetch_processed_true_ids(self):
         session = FakeSession([])
@@ -96,4 +118,3 @@ class TestFarmerIdRepository(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

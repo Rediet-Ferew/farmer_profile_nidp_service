@@ -11,18 +11,26 @@ class FakeSettings:
     fetch_limit = 100
     chunk_limit = 10
     include_id_type_list = ["UID", "FAN", "RID"]
+    partner_unique_id_prefix = ""
     background_enabled = False
     lock_enabled = True
     processed_flag_value = "false"
     response_id_type = "FAN"
     response_id_field = "fan"
+    service_db_auto_migrate = True
 
 
 class FakeFarmerIdRepository:
     def __init__(self, pending_ids):
         self.pending_ids = pending_ids
 
-    async def fetch_pending_ids(self, session, include_id_types, limit):
+    async def fetch_pending_ids(
+        self,
+        session,
+        include_id_types,
+        limit,
+        partner_unique_id_prefix="",
+    ):
         return self.pending_ids[:limit]
 
 
@@ -43,6 +51,42 @@ class FakeUpdateRepository:
     async def apply_updates(self, session, updates):
         self.calls.append(updates)
         return len(updates)
+
+
+class FakeLogRepository:
+    def __init__(self):
+        self.runs = []
+        self.finished_runs = []
+        self.chunks = []
+        self.finished_chunks = []
+        self.pending_items = []
+        self.update_items = []
+        self.next_run_id = 1
+        self.next_chunk_id = 10
+
+    async def create_run(self, session, **kwargs):
+        self.runs.append(kwargs)
+        run_id = self.next_run_id
+        self.next_run_id += 1
+        return run_id
+
+    async def finish_run(self, session, run_id, **kwargs):
+        self.finished_runs.append((run_id, kwargs))
+
+    async def create_chunk(self, session, **kwargs):
+        self.chunks.append(kwargs)
+        chunk_id = self.next_chunk_id
+        self.next_chunk_id += 1
+        return chunk_id
+
+    async def finish_chunk(self, session, chunk_id, **kwargs):
+        self.finished_chunks.append((chunk_id, kwargs))
+
+    async def log_pending_items(self, session, **kwargs):
+        self.pending_items.append(kwargs)
+
+    async def log_updates(self, session, **kwargs):
+        self.update_items.append(kwargs)
 
 
 class FakeSession:
@@ -103,6 +147,7 @@ class TestNationalIdDedupService(unittest.IsolatedAsyncioTestCase):
         service.farmer_id_repository = FakeFarmerIdRepository(pending_ids)
         service.nidp_client = FakeNidpClient(response)
         service.farmer_update_repository = FakeUpdateRepository()
+        service.log_repository = FakeLogRepository()
         return service
 
     async def test_dry_run_does_not_write(self):
@@ -114,9 +159,13 @@ class TestNationalIdDedupService(unittest.IsolatedAsyncioTestCase):
         with patch(
             "openg2p_farmer_profile_dedup.services.national_id_dedup_service.get_session",
             fake_get_session,
+        ), patch(
+            "openg2p_farmer_profile_dedup.services.national_id_dedup_service.get_service_session",
+            fake_get_session,
         ):
             result = await service.run_once(dry_run=True)
 
+        self.assertEqual(result.run_id, 1)
         self.assertEqual(result.fetched, 1)
         self.assertEqual(result.sent_to_nidp, 1)
         self.assertEqual(result.transformed, 1)
@@ -124,6 +173,8 @@ class TestNationalIdDedupService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.updated, 0)
         self.assertEqual(service.farmer_update_repository.calls, [])
         self.assertEqual(result.status, "dry_run_complete")
+        self.assertEqual(service.log_repository.finished_runs[0][1]["status"], "dry_run_complete")
+        self.assertEqual(service.log_repository.update_items[0]["update_status"], "dry_run")
 
     async def test_successful_run_marks_ids_processed_and_writes(self):
         service = self.build_service(
@@ -134,6 +185,9 @@ class TestNationalIdDedupService(unittest.IsolatedAsyncioTestCase):
         with patch(
             "openg2p_farmer_profile_dedup.services.national_id_dedup_service.get_session",
             fake_get_session,
+        ), patch(
+            "openg2p_farmer_profile_dedup.services.national_id_dedup_service.get_service_session",
+            fake_get_session,
         ):
             result = await service.run_once(dry_run=False)
 
@@ -143,6 +197,7 @@ class TestNationalIdDedupService(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(id_updates["FAN"].fayda_processed)
         self.assertTrue(id_updates["UID"].fayda_processed)
         self.assertEqual(result.status, "db_update_complete")
+        self.assertEqual(service.log_repository.update_items[0]["update_status"], "updated")
 
     async def test_failed_run_keeps_id_unprocessed_and_writes_invalid_status(self):
         service = self.build_service(
@@ -160,6 +215,9 @@ class TestNationalIdDedupService(unittest.IsolatedAsyncioTestCase):
         with patch(
             "openg2p_farmer_profile_dedup.services.national_id_dedup_service.get_session",
             fake_get_session,
+        ), patch(
+            "openg2p_farmer_profile_dedup.services.national_id_dedup_service.get_service_session",
+            fake_get_session,
         ):
             result = await service.run_once(dry_run=False)
 
@@ -174,4 +232,3 @@ class TestNationalIdDedupService(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

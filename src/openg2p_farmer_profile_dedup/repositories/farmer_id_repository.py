@@ -12,6 +12,7 @@ class FarmerIdRepository:
         session: AsyncSession,
         include_id_types: list[str],
         limit: int,
+        partner_unique_id_prefix: str = "",
     ) -> list[PendingId]:
         if not include_id_types:
             return []
@@ -33,6 +34,10 @@ class FarmerIdRepository:
                   AND rp.is_registrant = TRUE
                   AND rp.is_group = FALSE
                   AND rp.active = TRUE
+                  AND (
+                      :partner_unique_id_prefix = ''
+                      OR rp.unique_id LIKE :partner_unique_id_pattern
+                  )
                   AND t.name IN :include_id_types
                   AND gid.value IS NOT NULL
                   AND BTRIM(gid.value) <> ''
@@ -57,6 +62,8 @@ class FarmerIdRepository:
             {
                 "include_id_types": include_id_types,
                 "limit": limit,
+                "partner_unique_id_prefix": partner_unique_id_prefix,
+                "partner_unique_id_pattern": f"{partner_unique_id_prefix}%",
             },
         )
         return [PendingId.model_validate(row) for row in result.mappings().all()]
