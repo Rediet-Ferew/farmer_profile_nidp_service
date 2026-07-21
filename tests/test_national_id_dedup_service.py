@@ -12,9 +12,9 @@ class FakeSettings:
     chunk_limit = 10
     include_id_type_list = ["UID", "FAN", "RID"]
     partner_unique_id_prefix = ""
+    rerun_invalid_records = True
     background_enabled = False
     lock_enabled = True
-    processed_flag_value = "false"
     response_id_type = "FAN"
     response_id_field = "fan"
     service_db_auto_migrate = True
@@ -30,6 +30,7 @@ class FakeFarmerIdRepository:
         include_id_types,
         limit,
         partner_unique_id_prefix="",
+        rerun_invalid_records=True,
     ):
         return self.pending_ids[:limit]
 

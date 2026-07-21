@@ -32,7 +32,7 @@ class FakeSession:
 
 
 class TestFarmerIdRepository(unittest.IsolatedAsyncioTestCase):
-    async def test_fetch_pending_ids_filters_unprocessed_ids(self):
+    async def test_fetch_pending_ids_filters_farmers_without_profile_image(self):
         session = FakeSession(
             [
                 {
@@ -66,11 +66,26 @@ class TestFarmerIdRepository(unittest.IsolatedAsyncioTestCase):
         self.assertIn("rp.is_group = FALSE", query)
         self.assertIn("rp.active = TRUE", query)
         self.assertIn("t.name IN", query)
-        self.assertIn("gid.fayda_processed = 'false'", query)
-        self.assertIn("gid.fayda_processed IS NULL", query)
-        self.assertIn("gid.fayda_processed = ''", query)
+        self.assertIn("NOT EXISTS", query)
+        self.assertIn("ir_attachment att", query)
+        self.assertIn("att.res_model = 'res.partner'", query)
+        self.assertIn("att.res_field = 'image_1920'", query)
+        self.assertIn("gid.status IS DISTINCT FROM 'invalid'", query)
         self.assertIn("rp.unique_id LIKE :partner_unique_id_pattern", query)
         self.assertIn("LIMIT", query)
+        self.assertEqual(session.executed_params["rerun_invalid_records"], True)
+
+    async def test_fetch_pending_ids_rerun_invalid_records_false_is_passed_through(self):
+        session = FakeSession([])
+
+        await FarmerIdRepository().fetch_pending_ids(
+            session=session,
+            include_id_types=["UID"],
+            limit=10,
+            rerun_invalid_records=False,
+        )
+
+        self.assertEqual(session.executed_params["rerun_invalid_records"], False)
 
     async def test_fetch_pending_ids_can_filter_by_unique_id_prefix(self):
         session = FakeSession([])
@@ -91,7 +106,7 @@ class TestFarmerIdRepository(unittest.IsolatedAsyncioTestCase):
             "LOCAL-FAYDA-PIPELINE%",
         )
 
-    async def test_fetch_pending_ids_does_not_fetch_processed_true_ids(self):
+    async def test_fetch_pending_ids_does_not_depend_on_farmer_record_fayda_flags(self):
         session = FakeSession([])
 
         result = await FarmerIdRepository().fetch_pending_ids(
@@ -101,6 +116,7 @@ class TestFarmerIdRepository(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, [])
+        self.assertNotIn("gid.fayda_processed", session.executed_query)
         self.assertNotIn("gid.fayda_processed = 'true'", session.executed_query)
 
     async def test_fetch_pending_ids_returns_empty_for_no_configured_types(self):

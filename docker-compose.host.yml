@@ -1,0 +1,10 @@
+services:
+  farmer-profile-dedup:
+    network_mode: host
+    ports: []
+    extra_hosts: []
+    # Must match the host odoo-user uid:gid so the container can write into the
+    # bind-mounted filestore below (image dir is group-writable, not other-writable).
+    user: "1001:1001"
+    volumes:
+      - /home/odoo-user/.local/share/Odoo/filestore/odoo_dev:/odoo-filestore

@@ -1,13 +1,21 @@
+import asyncio
+import base64
+import binascii
+import hashlib
 import logging
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import get_settings
 from ..schemas import FarmerDedupUpdate, IdUpdate
 
 _logger = logging.getLogger(__name__)
+
+IMAGE_COLUMN = "image_1920"
 
 
 class FarmerUpdateRepository:
@@ -25,12 +33,13 @@ class FarmerUpdateRepository:
         "gender",
         "birthdate",
         "birth_place",
-        "image_1920",
+        IMAGE_COLUMN,
         "registration_date",
     }
 
     def __init__(self):
         self._partner_table_columns: set[str] | None = None
+        self.settings = get_settings()
 
     async def apply_updates(
         self,
@@ -110,12 +119,17 @@ class FarmerUpdateRepository:
         partner_id: int,
         partner_values: dict[str, Any],
     ) -> None:
+        image_value = partner_values.get(IMAGE_COLUMN)
+        if image_value not in (None, ""):
+            await self.write_image_attachment(session, partner_id, image_value)
+
         partner_table_columns = await self.get_partner_table_columns(session)
         skipped_columns = sorted(
             key
             for key, value in partner_values.items()
             if key in self.PARTNER_UPDATE_COLUMNS
             and key not in partner_table_columns
+            and key != IMAGE_COLUMN
             and value not in (None, "")
         )
         if skipped_columns:
@@ -175,11 +189,168 @@ class FarmerUpdateRepository:
 
     @staticmethod
     def prepare_partner_value(key: str, value: Any) -> Any:
-        if key == "image_1920" and isinstance(value, str):
-            return value.encode()
         if key in {"birthdate", "registration_date"} and isinstance(value, str):
             return date.fromisoformat(value)
         return value
+
+    async def write_image_attachment(
+        self,
+        session: AsyncSession,
+        partner_id: int,
+        raw_value: Any,
+    ) -> None:
+        """Persist image_1920 the way Odoo's ORM does: as a filestore blob plus an
+        ir_attachment row, since it is an attachment-backed field, not a physical
+        res_partner column.
+        """
+        if isinstance(raw_value, bytes):
+            encoded = raw_value
+        elif isinstance(raw_value, str):
+            encoded = raw_value.encode()
+        else:
+            return
+
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            _logger.warning(
+                "Skipping %s attachment write for partner_id=%s: "
+                "value is not valid base64 image data.",
+                IMAGE_COLUMN,
+                partner_id,
+            )
+            return
+        if not decoded:
+            return
+
+        filestore_dir = self.settings.odoo_filestore_dir
+        if not filestore_dir:
+            _logger.warning(
+                "Skipping %s attachment write for partner_id=%s: "
+                "FARMER_DEDUP_ODOO_FILESTORE_DIR is not configured.",
+                IMAGE_COLUMN,
+                partner_id,
+            )
+            return
+
+        checksum = hashlib.sha1(decoded).hexdigest()
+        store_fname = f"{checksum[:2]}/{checksum}"
+        await asyncio.to_thread(
+            self._write_filestore_blob, filestore_dir, store_fname, decoded
+        )
+        mimetype = self._guess_image_mimetype(decoded)
+
+        await self._upsert_image_attachment(
+            session,
+            partner_id=partner_id,
+            store_fname=store_fname,
+            checksum=checksum,
+            mimetype=mimetype,
+            file_size=len(decoded),
+        )
+        _logger.info(
+            "Wrote %s attachment partner_id=%s checksum=%s bytes=%s",
+            IMAGE_COLUMN,
+            partner_id,
+            checksum,
+            len(decoded),
+        )
+
+    @staticmethod
+    def _write_filestore_blob(filestore_dir: str, store_fname: str, data: bytes) -> None:
+        path = Path(filestore_dir) / store_fname
+        if path.exists():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_bytes(data)
+        tmp_path.replace(path)
+
+    @staticmethod
+    def _guess_image_mimetype(data: bytes) -> str:
+        if data.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return "image/webp"
+        if data.lstrip().startswith((b"<svg", b"<?xml")):
+            return "image/svg+xml"
+        return "application/octet-stream"
+
+    async def _upsert_image_attachment(
+        self,
+        session: AsyncSession,
+        *,
+        partner_id: int,
+        store_fname: str,
+        checksum: str,
+        mimetype: str,
+        file_size: int,
+    ) -> None:
+        result = await session.execute(
+            text(
+                """
+                SELECT id
+                FROM ir_attachment
+                WHERE res_model = 'res.partner'
+                  AND res_field = :res_field
+                  AND res_id = :partner_id
+                LIMIT 1
+                """
+            ),
+            {"res_field": IMAGE_COLUMN, "partner_id": partner_id},
+        )
+        existing = result.mappings().first()
+
+        if existing:
+            await session.execute(
+                text(
+                    """
+                    UPDATE ir_attachment
+                    SET store_fname = :store_fname,
+                        checksum = :checksum,
+                        mimetype = :mimetype,
+                        file_size = :file_size,
+                        db_datas = NULL,
+                        write_date = NOW()
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": existing["id"],
+                    "store_fname": store_fname,
+                    "checksum": checksum,
+                    "mimetype": mimetype,
+                    "file_size": file_size,
+                },
+            )
+        else:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO ir_attachment (
+                        name, res_model, res_field, res_id, type,
+                        store_fname, checksum, mimetype, file_size,
+                        public, create_date, write_date
+                    ) VALUES (
+                        :res_field, 'res.partner', :res_field, :partner_id, 'binary',
+                        :store_fname, :checksum, :mimetype, :file_size,
+                        FALSE, NOW(), NOW()
+                    )
+                    """
+                ),
+                {
+                    "res_field": IMAGE_COLUMN,
+                    "partner_id": partner_id,
+                    "store_fname": store_fname,
+                    "checksum": checksum,
+                    "mimetype": mimetype,
+                    "file_size": file_size,
+                },
+            )
 
     async def upsert_reg_id(
         self,
@@ -209,25 +380,21 @@ class FarmerUpdateRepository:
             await self.update_reg_id(session, values)
             _logger.info(
                 "Updated registrant ID from Fayda partner_id=%s id_type=%s value=%s "
-                "status=%s fayda_processed=%s fayda_response_status=%s",
+                "status=%s",
                 partner_id,
                 id_update.id_type,
                 id_update.value,
                 id_update.status,
-                id_update.fayda_processed,
-                id_update.fayda_response_status,
             )
         else:
             await self.insert_reg_id(session, values)
             _logger.info(
                 "Inserted registrant ID from Fayda partner_id=%s id_type=%s value=%s "
-                "status=%s fayda_processed=%s fayda_response_status=%s",
+                "status=%s",
                 partner_id,
                 id_update.id_type,
                 id_update.value,
                 id_update.status,
-                id_update.fayda_processed,
-                id_update.fayda_response_status,
             )
 
     async def get_id_type_id(self, session: AsyncSession, id_type: str) -> int | None:
@@ -306,12 +473,7 @@ class FarmerUpdateRepository:
             "status": id_update.status,
             "description": id_update.description,
             "expiry_date": self.prepare_date_value(id_update.expiry_date),
-            "fayda_response_status": id_update.fayda_response_status,
         }
-        if id_update.fayda_processed is not None:
-            values["fayda_processed"] = (
-                "true" if id_update.fayda_processed else "false"
-            )
         return values
 
     @staticmethod
@@ -326,11 +488,8 @@ class FarmerUpdateRepository:
             "status = :status",
             "description = :description",
             "expiry_date = :expiry_date",
-            "fayda_response_status = :fayda_response_status",
             "write_date = NOW()",
         ]
-        if "fayda_processed" in values:
-            set_fields.append("fayda_processed = :fayda_processed")
 
         await session.execute(
             text(
@@ -351,7 +510,6 @@ class FarmerUpdateRepository:
             "status",
             "description",
             "expiry_date",
-            "fayda_response_status",
             "create_date",
             "write_date",
         ]
@@ -362,13 +520,9 @@ class FarmerUpdateRepository:
             ":status",
             ":description",
             ":expiry_date",
-            ":fayda_response_status",
             "NOW()",
             "NOW()",
         ]
-        if "fayda_processed" in values:
-            columns.append("fayda_processed")
-            params.append(":fayda_processed")
 
         await session.execute(
             text(

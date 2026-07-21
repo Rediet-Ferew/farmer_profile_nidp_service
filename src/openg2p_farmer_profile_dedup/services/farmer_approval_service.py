@@ -4,6 +4,7 @@ from ..config import get_settings
 from ..engine import get_service_session, get_session
 from ..repositories import DedupLogRepository, FarmerApprovalRepository
 from ..schemas import (
+    FarmerApprovalCandidate,
     FarmerApprovalItemResult,
     FarmerApprovalRunResponse,
     FarmerApprovalStatusResponse,
@@ -56,23 +57,36 @@ class FarmerApprovalService:
         status = "dry_run_complete" if effective_dry_run else "db_update_complete"
 
         try:
-            async with get_session() as session:
-                candidates = await self.repository.fetch_successfully_deduped_draft_farmers(
+            async with get_service_session() as session:
+                candidate_rows = await self.log_repository.fetch_successfully_processed_candidates(
                     session,
                     valid_id_types=self.settings.approval_valid_id_type_list,
                     response_status=self.settings.approval_response_status,
-                    state=self.settings.approval_state,
                     limit=effective_limit,
-                    partner_unique_id_prefix=self.settings.partner_unique_id_prefix,
                 )
-                fetched = len(candidates)
-                _logger.info(
-                    "Farmer approval run %s fetched %s successfully deduped draft candidates.",
-                    run_id,
-                    fetched,
-                )
+            candidates = [
+                FarmerApprovalCandidate.model_validate(row)
+                for row in candidate_rows
+            ]
+            fetched = len(candidates)
+            _logger.info(
+                "Farmer approval run %s fetched %s successfully processed candidates "
+                "from service DB.",
+                run_id,
+                fetched,
+            )
+
+            async with get_session() as session:
                 partner_ids = [candidate.partner_id for candidate in candidates]
                 partners = await self.repository.load_partners(session, partner_ids)
+                if self.settings.partner_unique_id_prefix:
+                    partners = [
+                        partner
+                        for partner in partners
+                        if to_text(partner.get("unique_id")).startswith(
+                            self.settings.partner_unique_id_prefix
+                        )
+                    ]
                 _logger.info(
                     "Farmer approval run %s loaded %s partner records for validation.",
                     run_id,

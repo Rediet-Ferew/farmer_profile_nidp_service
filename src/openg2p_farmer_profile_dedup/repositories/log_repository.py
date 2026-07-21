@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..schemas import FarmerApprovalItemResult, FarmerDedupUpdate, PendingId
@@ -72,9 +72,24 @@ class DedupLogRepository:
                     update_status VARCHAR(64),
                     fayda_processed BOOLEAN,
                     fayda_response_status TEXT,
+                    id_status VARCHAR(64),
+                    id_description TEXT,
+                    updated_partner_fields TEXT,
+                    id_update_summary TEXT,
                     error_message TEXT,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
                 )
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                ALTER TABLE farmer_dedup_item
+                ADD COLUMN IF NOT EXISTS id_status VARCHAR(64),
+                ADD COLUMN IF NOT EXISTS id_description TEXT,
+                ADD COLUMN IF NOT EXISTS updated_partner_fields TEXT,
+                ADD COLUMN IF NOT EXISTS id_update_summary TEXT
                 """
             )
         )
@@ -91,6 +106,14 @@ class DedupLogRepository:
                 """
                 CREATE INDEX IF NOT EXISTS farmer_dedup_item_id_value_idx
                     ON farmer_dedup_item(id_value)
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS farmer_dedup_item_partner_id_idx
+                    ON farmer_dedup_item(partner_id)
                 """
             )
         )
@@ -350,6 +373,10 @@ class DedupLogRepository:
                 update_status=update_status,
                 fayda_processed=self._first_fayda_processed(update),
                 fayda_response_status=update.response_status,
+                id_status=self._first_id_status(update),
+                id_description=self._first_id_description(update),
+                updated_partner_fields=", ".join(sorted(update.partner_values)),
+                id_update_summary=self._id_update_summary(update),
             )
 
     async def create_item(
@@ -366,6 +393,10 @@ class DedupLogRepository:
         update_status: str,
         fayda_processed: bool | None = None,
         fayda_response_status: str | None = None,
+        id_status: str | None = None,
+        id_description: str | None = None,
+        updated_partner_fields: str | None = None,
+        id_update_summary: str | None = None,
         error_message: str | None = None,
     ) -> None:
         await session.execute(
@@ -382,6 +413,10 @@ class DedupLogRepository:
                     update_status,
                     fayda_processed,
                     fayda_response_status,
+                    id_status,
+                    id_description,
+                    updated_partner_fields,
+                    id_update_summary,
                     error_message
                 )
                 VALUES (
@@ -395,6 +430,10 @@ class DedupLogRepository:
                     :update_status,
                     :fayda_processed,
                     :fayda_response_status,
+                    :id_status,
+                    :id_description,
+                    :updated_partner_fields,
+                    :id_update_summary,
                     :error_message
                 )
                 """
@@ -410,9 +449,54 @@ class DedupLogRepository:
                 "update_status": update_status,
                 "fayda_processed": fayda_processed,
                 "fayda_response_status": fayda_response_status,
+                "id_status": id_status,
+                "id_description": id_description,
+                "updated_partner_fields": updated_partner_fields,
+                "id_update_summary": id_update_summary,
                 "error_message": error_message,
             },
         )
+
+    async def fetch_successfully_processed_candidates(
+        self,
+        session: AsyncSession,
+        *,
+        valid_id_types: list[str],
+        response_status: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if not valid_id_types:
+            return []
+        query = (
+            text(
+                """
+                SELECT DISTINCT ON (partner_id)
+                    partner_id,
+                    id_type AS dedup_id_type,
+                    id_value AS dedup_id_value
+                FROM farmer_dedup_item
+                WHERE partner_id IS NOT NULL
+                  AND id_type IN :valid_id_types
+                  AND id_value IS NOT NULL
+                  AND BTRIM(id_value) <> ''
+                  AND fayda_processed IS TRUE
+                  AND UPPER(COALESCE(fayda_response_status, '')) = UPPER(:response_status)
+                ORDER BY partner_id ASC, created_at DESC, id DESC
+                LIMIT :limit
+                """
+            )
+            .bindparams(bindparam("valid_id_types", expanding=True))
+            .bindparams(bindparam("limit"))
+        )
+        result = await session.execute(
+            query,
+            {
+                "valid_id_types": valid_id_types,
+                "response_status": response_status,
+                "limit": limit,
+            },
+        )
+        return [dict(row) for row in result.mappings().all()]
 
     async def get_latest_run(self, session: AsyncSession) -> dict[str, Any] | None:
         result = await session.execute(
@@ -605,3 +689,24 @@ class DedupLogRepository:
             if id_update.fayda_processed is not None:
                 return id_update.fayda_processed
         return None
+
+    @staticmethod
+    def _first_id_status(update: FarmerDedupUpdate) -> str | None:
+        for id_update in update.id_updates:
+            if id_update.status:
+                return id_update.status
+        return None
+
+    @staticmethod
+    def _first_id_description(update: FarmerDedupUpdate) -> str | None:
+        for id_update in update.id_updates:
+            if id_update.description:
+                return id_update.description
+        return None
+
+    @staticmethod
+    def _id_update_summary(update: FarmerDedupUpdate) -> str:
+        return "; ".join(
+            f"{id_update.id_type}:{id_update.value}:{id_update.status}"
+            for id_update in update.id_updates
+        )

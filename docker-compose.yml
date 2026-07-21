@@ -1,9 +1,8 @@
 services:
   farmer-profile-dedup:
     build:
-      context: .
-      args:
-        OPENG2P_FASTAPI_COMMON_REF: ${OPENG2P_FASTAPI_COMMON_REF:-git+https://github.com/OpenG2P/openg2p-fastapi-common.git#subdirectory=openg2p-fastapi-common}
+      context: ..
+      dockerfile: openg2p-farmer-profile-dedup/Dockerfile.local
     image: openg2p-farmer-profile-dedup:latest
     env_file:
       - .env
@@ -12,6 +11,8 @@ services:
       COMMON_APP_PORT: ${COMMON_APP_PORT:-8001}
     ports:
       - "${COMMON_APP_PORT:-8001}:${COMMON_APP_PORT:-8001}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test:

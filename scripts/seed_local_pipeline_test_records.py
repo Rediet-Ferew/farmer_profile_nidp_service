@@ -7,16 +7,23 @@ Run with:
 
 The mock API recognizes UID values 100000000001 through 100000000030 and
 returns deterministic successful Fayda data for them.
+
+To seed another range, pass environment variables:
+
+    TEST_START_INDEX=31 TEST_COUNT=30 ./odoo-bin shell -c debian/odoo.conf -d odoo_dev --no-http \
+        < custom_addons/openg2p-farmer-profile-dedup/scripts/seed_local_pipeline_test_records.py
 """
 
 import base64
+import os
 from datetime import date
 
 
 SUCCESS_MESSAGE = "Registration has processed successfully."
-TEST_COUNT = 30
+TEST_START_INDEX = int(os.getenv("TEST_START_INDEX", "1"))
+TEST_COUNT = int(os.getenv("TEST_COUNT", "30"))
 TEST_PREFIX = "LOCAL-FAYDA-PIPELINE"
-UID_START = 100000000001
+UID_BASE = 100000000000
 
 
 def format_uid(value):
@@ -162,10 +169,12 @@ def delete_existing_child_rows(partner):
     partner.phone_number_ids.unlink()
     partner.land_information_ids.filtered(lambda row: row.land_id and row.land_id.startswith(TEST_PREFIX)).unlink()
     Membership.search([("individual", "=", partner.id)]).unlink()
+    if "image_1920" in Partner._fields:
+        partner.write({"image_1920": False})
 
 
 def upsert_test_partner(index, refs):
-    uid_value = format_uid(UID_START + index - 1)
+    uid_value = format_uid(UID_BASE + index)
     mavuno_value = f"{TEST_PREFIX}-MAVUNO-{index:03d}"
     unique_id = f"{TEST_PREFIX}-{index:03d}"
 
@@ -281,10 +290,6 @@ def upsert_test_partner(index, refs):
         "description": False,
         "expiry_date": False,
     }
-    if "fayda_processed" in RegId._fields:
-        base_id_vals["fayda_processed"] = False
-    if "fayda_response_status" in RegId._fields:
-        base_id_vals["fayda_response_status"] = False
 
     RegId.create({**base_id_vals, "id_type": id_types["UID"].id, "value": uid_value})
     RegId.create(
@@ -302,7 +307,7 @@ def upsert_test_partner(index, refs):
 
 refs = get_required_reference_data()
 created_or_updated = []
-for i in range(1, TEST_COUNT + 1):
+for i in range(TEST_START_INDEX, TEST_START_INDEX + TEST_COUNT):
     created_or_updated.append(upsert_test_partner(i, refs))
 
 seeded_partner_ids = [item[0].id for item in created_or_updated]
@@ -318,6 +323,7 @@ env.cr.execute(
 env.cr.commit()
 
 print(f"seeded_or_refreshed={len(created_or_updated)}")
+print(f"index_range={TEST_START_INDEX}-{TEST_START_INDEX + TEST_COUNT - 1}")
 print("uid_values=" + ",".join(item[1] for item in created_or_updated))
 print("mavuno_values=" + ",".join(item[2] for item in created_or_updated))
-print("next_steps=run mock API, then run farmer dedup service against odoo_dev")
+print("next_steps=run farmer dedup service with internal mock enabled against odoo_dev")

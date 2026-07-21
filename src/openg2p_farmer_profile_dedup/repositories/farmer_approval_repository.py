@@ -1,10 +1,9 @@
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..schemas import FarmerApprovalCandidate
 from ..utils.farmer_approval_validator import (
     build_duplicate_national_id_partners,
     m2o_id,
@@ -14,66 +13,6 @@ from ..utils.farmer_approval_validator import (
 
 class FarmerApprovalRepository:
     """Direct DB access for post-dedup farmer approval processing."""
-
-    async def fetch_successfully_deduped_draft_farmers(
-        self,
-        session: AsyncSession,
-        *,
-        valid_id_types: list[str],
-        response_status: str,
-        state: str,
-        limit: int,
-        partner_unique_id_prefix: str = "",
-    ) -> list[FarmerApprovalCandidate]:
-        if not valid_id_types:
-            return []
-
-        query = (
-            text(
-                """
-                SELECT DISTINCT ON (rp.id)
-                    rp.id AS partner_id,
-                    t.name AS dedup_id_type,
-                    gid.value AS dedup_id_value
-                FROM res_partner rp
-                JOIN g2p_reg_id gid ON gid.partner_id = rp.id
-                JOIN g2p_id_type t ON t.id = gid.id_type
-                WHERE rp.is_farmer = 'yes'
-                  AND rp.is_registrant = TRUE
-                  AND rp.is_group = FALSE
-                  AND rp.active = TRUE
-                  AND rp.state = :state
-                  AND (
-                      :partner_unique_id_prefix = ''
-                      OR rp.unique_id LIKE :partner_unique_id_pattern
-                  )
-                  AND t.name IN :valid_id_types
-                  AND gid.value IS NOT NULL
-                  AND BTRIM(gid.value) <> ''
-                  AND gid.fayda_processed = 'true'
-                  AND UPPER(COALESCE(gid.fayda_response_status, '')) = UPPER(:response_status)
-                ORDER BY rp.id ASC, t.name ASC, gid.id ASC
-                LIMIT :limit
-                """
-            )
-            .bindparams(bindparam("valid_id_types", expanding=True))
-            .bindparams(bindparam("limit"))
-        )
-        result = await session.execute(
-            query,
-            {
-                "valid_id_types": valid_id_types,
-                "response_status": response_status,
-                "state": state,
-                "limit": limit,
-                "partner_unique_id_prefix": partner_unique_id_prefix,
-                "partner_unique_id_pattern": f"{partner_unique_id_prefix}%",
-            },
-        )
-        return [
-            FarmerApprovalCandidate.model_validate(row)
-            for row in result.mappings().all()
-        ]
 
     async def load_partners(
         self,

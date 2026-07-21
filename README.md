@@ -5,10 +5,11 @@ Standalone FastAPI service for farmer-profile national ID deduplication.
 The service:
 
 - fetches pending `UID`, `FAN`, and `RID` values directly from the farmer profile database
+- treats farmers without a profile image as pending for NIDP processing
 - sends only IDs that have not been deduplicated before
 - calls the NIDP/Fayda `getDataById` API
 - updates `g2p_reg_id` and selected `res_partner` fields directly in the farmer profile database
-- stores `fayda_processed` and `fayda_response_status` on ID rows
+- stores NIDP processing status, response status, ID status, descriptions, and updated-field summaries in the service database
 - can run national-ID deduplication continuously in the background
 - can run post-dedup farmer approval continuously in the background
 - stores persistent run/chunk/item logs in service tables
@@ -196,7 +197,8 @@ curl -X POST http://localhost:8001/farmer-approval/run-once \
 
 ## Post-Dedup Approval
 
-The approval worker finds draft farmers where at least one configured ID type has:
+The approval worker finds draft farmers whose service DB dedup log has at least
+one configured ID type with:
 
 ```text
 fayda_processed = true
@@ -221,6 +223,22 @@ cd /home/odoo-user/odoo-src/odoo
   < custom_addons/openg2p-farmer-profile-dedup/scripts/seed_local_pipeline_test_records.py
 ```
 
+To seed a fresh second batch after the first 30 records:
+
+```bash
+cd /home/odoo-user/odoo-src/odoo
+TEST_START_INDEX=31 TEST_COUNT=30 ./odoo-bin shell -c debian/odoo.conf -d odoo_dev --no-http \
+  < custom_addons/openg2p-farmer-profile-dedup/scripts/seed_local_pipeline_test_records.py
+```
+
+If Odoo computes `farmer_id` during seeding, clear it before testing approval:
+
+```bash
+cd /home/odoo-user/odoo-src/odoo
+TEST_START_INDEX=31 TEST_COUNT=30 ./odoo-bin shell -c debian/odoo.conf -d odoo_dev --no-http \
+  < custom_addons/openg2p-farmer-profile-dedup/scripts/clear_seed_farmer_ids.py
+```
+
 Then run the service with:
 
 ```env
@@ -239,6 +257,9 @@ The seeded farmers are named:
 Seed Farmer 001
 ...
 Seed Farmer 030
+Seed Farmer 031
+...
+Seed Farmer 060
 ```
 
 and have `unique_id` values:

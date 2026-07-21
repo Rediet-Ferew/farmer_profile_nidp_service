@@ -185,7 +185,16 @@ class MockNidpController:
                 {"language": "amh", "value": "ኢትዮጵያዊ"},
             ],
             "fan": fan,
-            "photo": "/9j/4AAQSkZJRgAB...",
+            # Minimal valid 1x1 JPEG, base64-encoded, so downstream image
+            # persistence can be exercised against real (if tiny) image bytes.
+            "photo": (
+                "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U"
+                "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgN"
+                "DRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy"
+                "MjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAU"
+                "EAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAA"
+                "AAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
+            ),
         }
 
     @staticmethod

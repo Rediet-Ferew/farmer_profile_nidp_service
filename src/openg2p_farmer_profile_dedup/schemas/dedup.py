@@ -56,7 +56,6 @@ class DedupStatusResponse(BaseModel):
     fetch_limit: int
     include_id_types: list[str]
     partner_unique_id_prefix: str = ""
-    processed_flag_value: str
     response_id_type: str
     response_id_field: str
     service_db_auto_migrate: bool = True

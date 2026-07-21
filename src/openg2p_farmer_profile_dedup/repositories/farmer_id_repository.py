@@ -13,6 +13,7 @@ class FarmerIdRepository:
         include_id_types: list[str],
         limit: int,
         partner_unique_id_prefix: str = "",
+        rerun_invalid_records: bool = True,
     ) -> list[PendingId]:
         if not include_id_types:
             return []
@@ -41,10 +42,16 @@ class FarmerIdRepository:
                   AND t.name IN :include_id_types
                   AND gid.value IS NOT NULL
                   AND BTRIM(gid.value) <> ''
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM ir_attachment att
+                      WHERE att.res_model = 'res.partner'
+                        AND att.res_field = 'image_1920'
+                        AND att.res_id = rp.id
+                  )
                   AND (
-                      gid.fayda_processed = 'false'
-                      OR gid.fayda_processed IS NULL
-                      OR gid.fayda_processed = ''
+                      :rerun_invalid_records = TRUE
+                      OR gid.status IS DISTINCT FROM 'invalid'
                   )
                 ORDER BY
                     rp.id ASC,
@@ -64,6 +71,7 @@ class FarmerIdRepository:
                 "limit": limit,
                 "partner_unique_id_prefix": partner_unique_id_prefix,
                 "partner_unique_id_pattern": f"{partner_unique_id_prefix}%",
+                "rerun_invalid_records": rerun_invalid_records,
             },
         )
         return [PendingId.model_validate(row) for row in result.mappings().all()]

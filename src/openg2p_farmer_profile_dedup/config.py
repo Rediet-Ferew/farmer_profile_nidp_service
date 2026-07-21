@@ -42,10 +42,11 @@ class Settings(BaseSettings):
     mock_nidp_enabled: bool = False
 
     include_id_types: str = "UID,FAN,RID"
-    processed_flag_value: str = "false"
     response_id_field: str = "fan"
     response_id_type: str = "FAN"
     partner_unique_id_prefix: str = ""
+    odoo_filestore_dir: str = Field(default="")
+    rerun_invalid_records: bool = Field(default=True)
     required_update_fields: str = (
         "name,given_name,family_name,gender,birthdate,image_1920,"
         "first_name_amh,family_name_amh,gf_name_amh,gf_name_eng"

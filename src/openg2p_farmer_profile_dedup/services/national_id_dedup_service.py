@@ -41,6 +41,7 @@ class NationalIdDedupService:
                 include_id_types=self.settings.include_id_type_list,
                 limit=effective_limit,
                 partner_unique_id_prefix=self.settings.partner_unique_id_prefix,
+                rerun_invalid_records=self.settings.rerun_invalid_records,
             )
         _logger.info(
             "Farmer dedup run %s fetched %s pending IDs. dry_run=%s limit=%s "
@@ -392,7 +393,6 @@ class NationalIdDedupService:
             fetch_limit=self.settings.fetch_limit,
             include_id_types=self.settings.include_id_type_list,
             partner_unique_id_prefix=self.settings.partner_unique_id_prefix,
-            processed_flag_value=self.settings.processed_flag_value,
             response_id_type=self.settings.response_id_type,
             response_id_field=self.settings.response_id_field,
             service_db_auto_migrate=self.settings.service_db_auto_migrate,
